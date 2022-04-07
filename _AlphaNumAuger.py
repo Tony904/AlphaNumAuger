@@ -169,14 +169,13 @@ def blotcher1(src):
     y = int(h / 2)
     x = int(w / 2)
     scale = float(random.randint(75, 125) / 100.)
-    angle = random.randint(0, 90)
+    angle = random.randint(0, 360)
     img = np.pad(img, ((x, x), (y, y), (0, 0)), mode='constant', constant_values=127)
     img = cv2.resize(img, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
 
     img_center = tuple(np.array(img.shape[1::-1]) / 2)
     rot_mat = cv2.getRotationMatrix2D(img_center, angle, 1.0)
-    img = cv2.warpAffine(img, rot_mat, img.shape[1::-1], flags=cv2.INTER_NEAREST,
-                         borderMode=cv2.BORDER_CONSTANT, borderValue=(127, 127, 127))
+    img = cv2.warpAffine(img, rot_mat, img.shape[1::-1], flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_WRAP)
     img = cv2.erode(img, (3, 3))
     img = cv2.dilate(img, (3, 3))
     img = increase_one_channel(img)
@@ -184,8 +183,7 @@ def blotcher1(src):
     img = cv2.resize(img, (0, 0), fx=1 / scale, fy=1 / scale, interpolation=cv2.INTER_NEAREST)
     img_center = tuple(np.array(img.shape[1::-1]) / 2)
     unrot_mat = cv2.getRotationMatrix2D(img_center, -angle, 1.0)
-    img = cv2.warpAffine(img, unrot_mat, img.shape[1::-1], flags=cv2.INTER_AREA,
-                         borderMode=cv2.BORDER_CONSTANT, borderValue=(127, 127, 127))
+    img = cv2.warpAffine(img, unrot_mat, img.shape[1::-1], flags=cv2.INTER_AREA, borderMode=cv2.BORDER_WRAP)
     img = cv2.erode(img, (3, 3))
     img = cv2.dilate(img, (5, 5))
     img = cv2.erode(img, (3, 3))
@@ -200,28 +198,6 @@ def blotcher1(src):
     img = cv2.GaussianBlur(img, (31, 31), cv2.BORDER_DEFAULT)
 
     img = cv2.resize(img, (0, 0), fx=1 / 10, fy=1 / 10, interpolation=cv2.INTER_AREA)
-    rads = angle * (math.pi / 180)
-    ox = int(math.cos(rads) * 3)
-    oy = int(math.sin(rads) * 3)
-    # iters = 5
-    # crop = np.full_like(img, 0)
-    # crop = cv2.line(crop, (0, x + ox + 1), (img.shape[1], x + ox + 1), (0, 0, 50), 1)
-    # crop = cv2.line(crop, (0, x + h + ox + 3), (img.shape[1], x + h + ox + 3), (0, 0, 50), 1)
-    # crop = cv2.line(crop, (y - oy, 0), (y - oy, img.shape[0]), (0, 0, 50), 1)
-    # crop = cv2.line(crop, (y + w - oy + 2, 0), (y + w - oy + 2, img.shape[0]), (0, 0, 50), 1)
-    # crop2 = np.full_like(img, 0)
-    # crop2 = cv2.line(crop2, (0, x), (img.shape[1], x), (0, 50, 0), 1)
-    # crop2 = cv2.line(crop2, (0, x + h), (img.shape[1], x + h), (0, 50, 0), 1)
-    # crop2 = cv2.line(crop2, (y, 0), (y, img.shape[0]), (0, 50, 0), 1)
-    # crop2 = cv2.line(crop2, (y + w, 0), (y + w, img.shape[0]), (0, 50, 0), 1)
-    # img = img + crop + crop2
-
-    # img = img[x:x+h+7, y-3:y+w+5+3].copy()
-    top = x + ox + 1
-    bottom = x + h + ox + 6
-    left = y - oy
-    right = y + w - oy + 2
-    img = img[top:bottom, left:right].copy()
     return img
 
 
@@ -239,66 +215,86 @@ def trim(src):
     #  trim from top
     thresh1 = 100
     thresh2 = 255
+    limit_pct = 0.33
+    limit_top = int(row * limit_pct)
+    limit_bottom = int(row - limit_top)
+    limit_left = int(col * limit_pct)
+    limit_right = int(col - limit_left)
+    print("Limits: top, bottom, left, right")
+    print(limit_top)
+    print(limit_bottom)
+    print(limit_left)
+    print(limit_right)
+    trim_top = 0
+    trim_bottom = row
+    trim_left = 0
+    trim_right = col
     for r in range(row - 1 - 3):
         print("r=" + str(r))
-        row1 = img[r, 0:col].copy()
-        sigma3 = row1.mean() - 3 * row1.std()
-        print("row1 sigma3=" + str(sigma3))
-        print("row1.std=" + str(row1.std()))
-        print("row1.mean=" + str(row1.mean()))
-        if sigma3 > thresh1:  # checks if row 'r' contains pixels of the character (which are very dark)
-            row2 = img[r + 1, 0:col].copy()
-            row12 = cv2.addWeighted(row1, 0.5, row2, 0.5, 0)
-            row3 = img[r + 2, 0:col].copy()
-            row4 = img[r + 3, 0:col].copy()
-            row34 = cv2.addWeighted(row3, 0.5, row4, 0.5, 0)
-            if r > row // 2:
-                grad = row34 - row12
-            else:
-                grad = row12 - row34
-            gmean = grad.mean()
-            gstd = grad.std()
-            grad_1sig = gmean + gstd
-            print("grad_1sig=" + str(grad_1sig))
-            print("grad std=" + str(gstd))
-            print("grad mean=" + str(gmean))
-            if gmean < thresh2:  # if gradient is low then it must not be an edge
+        if r < limit_top or r > limit_bottom:
+            row1 = img[r, 0:col].copy()
+            sigma3 = row1.mean() - 3 * row1.std()
+            print("row1 sigma3=" + str(sigma3))
+            print("row1.std=" + str(row1.std()))
+            print("row1.mean=" + str(row1.mean()))
+            if sigma3 > thresh1:  # checks if row 'r' contains pixels of the character (which are very dark)
+                row2 = img[r + 1, 0:col].copy()
+                row12 = cv2.addWeighted(row1, 0.5, row2, 0.5, 0)
+                row3 = img[r + 2, 0:col].copy()
+                row4 = img[r + 3, 0:col].copy()
+                row34 = cv2.addWeighted(row3, 0.5, row4, 0.5, 0)
                 if r > row // 2:
-                    trim_lines = cv2.line(trim_lines, (0, r + 3), (col, r + 3), (0, 0, 255), 1)
+                    grad = row34 - row12
                 else:
-                    trim_lines = cv2.line(trim_lines, (0, r), (col, r), (0, 0, 255), 1)
-
-                print("Drew line. r=" + str(r))
+                    grad = row12 - row34
+                gmean = grad.mean()
+                gstd = grad.std()
+                grad_1sig = gmean + gstd
+                print("grad_1sig=" + str(grad_1sig))
+                print("grad std=" + str(gstd))
+                print("grad mean=" + str(gmean))
+                if gmean < thresh2:  # if gradient is low then it must not be an edge
+                    if r > row // 2:
+                        trim_lines = cv2.line(trim_lines, (0, r + 3), (col, r + 3), (0, 0, 255), 1)
+                        trim_bottom = min(trim_bottom, r)
+                    else:
+                        trim_lines = cv2.line(trim_lines, (0, r), (col, r), (0, 0, 255), 1)
+                        trim_top = r
+                    print("Drew line. r=" + str(r))
     for c in range(col - 1 - 3):
-        print("c=" + str(c))
-        col1 = img[0:row, c].copy()
-        sigma3 = col1.mean() - 3 * col1.std()
-        print("col1 sigma3=" + str(sigma3))
-        print("col1.std=" + str(col1.std()))
-        print("col1.mean=" + str(col1.mean()))
-        if sigma3 > thresh1:  # checks if col 'c' contains pixels of the character (which are very dark)
-            col2 = img[0:row, c + 1].copy()
-            col12 = cv2.addWeighted(col1, 0.5, col2, 0.5, 0)
-            col3 = img[0:row, c + 2].copy()
-            col4 = img[0:row, c + 3].copy()
-            col34 = cv2.addWeighted(col3, 0.5, col4, 0.5, 0)
-            if c > col // 2:
-                grad = col34 - col12
-            else:
-                grad = col12 - col34
-            gmean = grad.mean()
-            gstd = grad.std()
-            grad_1sig = gmean + gstd
-            print("grad_1sig=" + str(grad_1sig))
-            print("grad std=" + str(gstd))
-            print("grad mean=" + str(gmean))
-            if gmean < thresh2:  # if gradient is low then it must not be an edge
+        if c < limit_left or c > limit_right:
+            print("c=" + str(c))
+            col1 = img[0:row, c].copy()
+            sigma3 = col1.mean() - 3 * col1.std()
+            print("col1 sigma3=" + str(sigma3))
+            print("col1.std=" + str(col1.std()))
+            print("col1.mean=" + str(col1.mean()))
+            if sigma3 > thresh1:  # checks if col 'c' contains pixels of the character (which are very dark)
+                col2 = img[0:row, c + 1].copy()
+                col12 = cv2.addWeighted(col1, 0.5, col2, 0.5, 0)
+                col3 = img[0:row, c + 2].copy()
+                col4 = img[0:row, c + 3].copy()
+                col34 = cv2.addWeighted(col3, 0.5, col4, 0.5, 0)
                 if c > col // 2:
-                    trim_lines = cv2.line(trim_lines, (c + 3, 0), (c + 3, row), (0, 0, 255), 1)
+                    grad = col34 - col12
                 else:
-                    trim_lines = cv2.line(trim_lines, (c, 0), (c, row), (0, 0, 255), 1)
-                print("Drew line. c=" + str(c))
-    img = cv2.addWeighted(img, 1, trim_lines, 1, 0)
+                    grad = col12 - col34
+                gmean = grad.mean()
+                gstd = grad.std()
+                grad_1sig = gmean + gstd
+                print("grad_1sig=" + str(grad_1sig))
+                print("grad std=" + str(gstd))
+                print("grad mean=" + str(gmean))
+                if gmean < thresh2:  # if gradient is low then it must not be an edge
+                    if c > col // 2:
+                        trim_lines = cv2.line(trim_lines, (c + 3, 0), (c + 3, row), (0, 0, 255), 1)
+                        trim_right = min(trim_right, c)
+                    else:
+                        trim_lines = cv2.line(trim_lines, (c, 0), (c, row), (0, 0, 255), 1)
+                        trim_left = c
+                    print("Drew line. c=" + str(c))
+    # img = cv2.addWeighted(img, 1, trim_lines, 1, 0)
+    img = img[trim_top:trim_bottom, trim_left:trim_right].copy()
     return img
 
 
@@ -392,10 +388,10 @@ def testing():
     img = cv2.warpAffine(img, unrot_mat, img.shape[1::-1], flags=cv2.INTER_AREA,
                          borderMode=cv2.BORDER_CONSTANT, borderValue=(127, 127, 127))
     img = cv2.line(img, (0, x), (img.shape[1], x), (0, 0, 255), 1)
-    img = cv2.line(img, (0, x+h), (img.shape[1], x+h), (0, 0, 255), 1)
+    img = cv2.line(img, (0, x + h), (img.shape[1], x + h), (0, 0, 255), 1)
     img = cv2.line(img, (y, 0), (y, img.shape[0]), (0, 0, 255), 1)
-    img = cv2.line(img, (y+w, 0), (y+w, img.shape[0]), (0, 0, 255), 1)
-    img = cv2.line(img, (0, x+iters), (img.shape[1], x+iters), (0, 255, 0), 1)
+    img = cv2.line(img, (y + w, 0), (y + w, img.shape[0]), (0, 0, 255), 1)
+    img = cv2.line(img, (0, x + iters), (img.shape[1], x + iters), (0, 255, 0), 1)
     cv2.imshow('img' + str(angle), img)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
