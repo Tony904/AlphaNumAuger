@@ -1,7 +1,27 @@
 import random
 import cv2
 import numpy as np
-import math
+import time
+from threading import Thread
+
+
+def create_mosaic():
+    angle_plus_minus = 30
+    darksize = 704
+    files = []
+    new_mosaic = True
+    new_row = True
+    new_col = True
+    for file in files:
+        img = cv2.imread(file)
+        rows, cols, ch = img.shape
+        if new_mosaic:
+            mosaic = img.copy()
+        else:
+            if mosaic.shape[1] + img.shape[1] > darksize:
+                top, bot, left, right = 0, 0, 0, darksize - mosaic.shape[1]
+                mosaic = np.pad(mosaic, ((top, bot), (left, right), (0, 0)), mode='constant', constant_values=0)
+
 
 
 def make_chars_list():
@@ -19,7 +39,6 @@ def copy_file():
     for c in chars:
         file = cv2.imread(direct + filename + c + ext)
         cv2.imwrite(direct + c + '_xlt' + '.png', file)
-    print("Done")
 
 
 def debug_img(src, title=""):
@@ -76,10 +95,8 @@ def gaussian_blur(src):
     rando = random.randint(1, 2)
     if rando == 1:
         ksize = 3
-    elif rando == 2:
-        ksize = 5
     else:
-        ksize = 1
+        ksize = 5
     blurred = cv2.GaussianBlur(src, (ksize, ksize), cv2.BORDER_DEFAULT)
     return blurred
 
@@ -100,7 +117,14 @@ def gaussian_noise(src):
 
 def dilate_img(src):
     img = src.copy()
-    dilated = cv2.dilate(img, (3, 3))
+    rando = random.randint(0, 2)
+    if rando == 0:
+        ksize = 3
+    elif rando == 1:
+        ksize = 5
+    else:
+        ksize = 7
+    dilated = cv2.dilate(img, (ksize, ksize))
     return dilated
 
 
@@ -111,11 +135,8 @@ def erode_img(src):
         ksize = 3
     elif rando == 1:
         ksize = 5
-    elif rando == 2:
-        ksize = 7
     else:
-        ksize = 1
-        print("ksize = 1")
+        ksize = 7
     eroded = cv2.erode(img, (ksize, ksize))
     return eroded
 
@@ -208,35 +229,63 @@ def sharpen(src, ksize=9):
     return img
 
 
-def trim(src):
+def sharpen_random(src):
+    img = src.copy()
+    rando = random.randint(1, 4)
+    if rando == 1:
+        k = 3
+    elif rando == 2:
+        k = 5
+    elif rando == 3:
+        k = 7
+    else:
+        k = 9
+    img2 = cv2.GaussianBlur(img, (k, k), cv2.BORDER_DEFAULT)
+    img = cv2.addWeighted(img, 1.5, img2, -0.5, 0)
+    return img
+
+
+def get_limit_pcts(c):
+    vpct = 0.33
+    hpct = 0.33
+    if c == 'I':
+        hpct = 0.45
+    elif c == '1':
+        hpct = 0.4
+    elif c == '5':
+        vpct = 0.3
+    return vpct, hpct
+
+
+def trim(src, character):
     img = src.copy()
     row, col, ch = img.shape
     trim_lines = np.full((row, col, ch), 0, dtype=np.uint8)
     #  trim from top
     thresh1 = 100
     thresh2 = 255
-    limit_pct = 0.33
-    limit_top = int(row * limit_pct)
+    limit_pct_vrt, limit_pct_hrz = get_limit_pcts(character)
+    limit_top = int(row * limit_pct_vrt)
     limit_bottom = int(row - limit_top)
-    limit_left = int(col * limit_pct)
+    limit_left = int(col * limit_pct_hrz)
     limit_right = int(col - limit_left)
-    print("Limits: top, bottom, left, right")
-    print(limit_top)
-    print(limit_bottom)
-    print(limit_left)
-    print(limit_right)
+    # print("Limits: top, bottom, left, right")
+    # print(limit_top)
+    # print(limit_bottom)
+    # print(limit_left)
+    # print(limit_right)
     trim_top = 0
     trim_bottom = row
     trim_left = 0
     trim_right = col
     for r in range(row - 1 - 3):
-        print("r=" + str(r))
+        # print("r=" + str(r))
         if r < limit_top or r > limit_bottom:
             row1 = img[r, 0:col].copy()
             sigma3 = row1.mean() - 3 * row1.std()
-            print("row1 sigma3=" + str(sigma3))
-            print("row1.std=" + str(row1.std()))
-            print("row1.mean=" + str(row1.mean()))
+            # print("row1 sigma3=" + str(sigma3))
+            # print("row1.std=" + str(row1.std()))
+            # print("row1.mean=" + str(row1.mean()))
             if sigma3 > thresh1:  # checks if row 'r' contains pixels of the character (which are very dark)
                 row2 = img[r + 1, 0:col].copy()
                 row12 = cv2.addWeighted(row1, 0.5, row2, 0.5, 0)
@@ -250,9 +299,9 @@ def trim(src):
                 gmean = grad.mean()
                 gstd = grad.std()
                 grad_1sig = gmean + gstd
-                print("grad_1sig=" + str(grad_1sig))
-                print("grad std=" + str(gstd))
-                print("grad mean=" + str(gmean))
+                # print("grad_1sig=" + str(grad_1sig))
+                # print("grad std=" + str(gstd))
+                # print("grad mean=" + str(gmean))
                 if gmean < thresh2:  # if gradient is low then it must not be an edge
                     if r > row // 2:
                         trim_lines = cv2.line(trim_lines, (0, r + 3), (col, r + 3), (0, 0, 255), 1)
@@ -260,15 +309,15 @@ def trim(src):
                     else:
                         trim_lines = cv2.line(trim_lines, (0, r), (col, r), (0, 0, 255), 1)
                         trim_top = r
-                    print("Drew line. r=" + str(r))
+                    # print("Drew line. r=" + str(r))
     for c in range(col - 1 - 3):
         if c < limit_left or c > limit_right:
-            print("c=" + str(c))
+            # print("c=" + str(c))
             col1 = img[0:row, c].copy()
             sigma3 = col1.mean() - 3 * col1.std()
-            print("col1 sigma3=" + str(sigma3))
-            print("col1.std=" + str(col1.std()))
-            print("col1.mean=" + str(col1.mean()))
+            # print("col1 sigma3=" + str(sigma3))
+            # print("col1.std=" + str(col1.std()))
+            # print("col1.mean=" + str(col1.mean()))
             if sigma3 > thresh1:  # checks if col 'c' contains pixels of the character (which are very dark)
                 col2 = img[0:row, c + 1].copy()
                 col12 = cv2.addWeighted(col1, 0.5, col2, 0.5, 0)
@@ -282,9 +331,9 @@ def trim(src):
                 gmean = grad.mean()
                 gstd = grad.std()
                 grad_1sig = gmean + gstd
-                print("grad_1sig=" + str(grad_1sig))
-                print("grad std=" + str(gstd))
-                print("grad mean=" + str(gmean))
+                # print("grad_1sig=" + str(grad_1sig))
+                # print("grad std=" + str(gstd))
+                # print("grad mean=" + str(gmean))
                 if gmean < thresh2:  # if gradient is low then it must not be an edge
                     if c > col // 2:
                         trim_lines = cv2.line(trim_lines, (c + 3, 0), (c + 3, row), (0, 0, 255), 1)
@@ -292,42 +341,40 @@ def trim(src):
                     else:
                         trim_lines = cv2.line(trim_lines, (c, 0), (c, row), (0, 0, 255), 1)
                         trim_left = c
-                    print("Drew line. c=" + str(c))
+                    # print("Drew line. c=" + str(c))
     # img = cv2.addWeighted(img, 1, trim_lines, 1, 0)
     img = img[trim_top:trim_bottom, trim_left:trim_right].copy()
     return img
 
 
-def process_images_base():
+def augment_images(suffix):
+    #  Medium blotching, medium texturing, thinner character thickness
+    start_time = time.time()
+    print("Timer started for suffix: " + suffix)
     chars = make_chars_list()
     for c in chars:
-        img = cv2.imread('../' + c + '.png')
-        rotated = blotcher1(img)
-        gnoise = gaussian_noise(rotated)
-        resized = resize_img(gnoise)
-        eroded = erode_img(resized)
-        dilated = dilate_img(eroded)
-        gblur = gaussian_blur(dilated)
-        cv2.imwrite('auged_' + c + '.png', gblur)
-        cv2.destroyAllWindows()
-
-
-def process_images_1():
-    #  Medium blotching, medium texturing, medium character thickness
-    chars = make_chars_list()
-    for c in chars:
-        img = cv2.imread('../' + c + '.png')
+        filename = c + suffix
+        full_path = src_dir + filename + ext
+        img = cv2.imread(full_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = custom_thresh(img, 127, 127)
         img = blotcher1(img)
+        img = sharpen(img)
         img = resize_img(img)
         img = erode_img(img)
-        img = dilate_img(img)
+        img = cv2.dilate(img, (3, 3), iterations=3)
+        img = cv2.erode(img, (3, 3), iterations=3)
         img = gaussian_blur(img)
-        cv2.imwrite('auged_' + c + '.png', img)
+        img = sharpen_random(img)
+        img = trim(img, c)
+        cv2.imwrite(save_dir + '_aug_' + filename + '.png', img)
+        # print("Saved " + save_dir + '_auged_' + filename + '.png')
+    end_time = time.time()
+    print(suffix + " process time: " + str(end_time - start_time))
 
 
-def process_images_2():
-    #  Medium blotching, medium texturing, thinner character thickness
-    chars = make_chars_list()
+if __name__ == '__main__':
+    # random.seed(3)
     src_dir = 'D:/Datasets/laser_etch/helvetica_images/chars/'
     save_dir = 'D:/Datasets/laser_etch/helvetica_images/chars/augments/'
     norm_suffix = ''
@@ -335,67 +382,16 @@ def process_images_2():
     xlite_suffix = '_xlt'
     suffixes = [norm_suffix, lite_suffix, xlite_suffix]
     ext = '.png'
-    for suffix in suffixes:
-        for c in chars:
-            filename = c + suffix
-            full_path = src_dir + filename + ext
-            img = cv2.imread(full_path)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = custom_thresh(img, 127, 127)
-            img = blotcher1(img)
-            img = sharpen(img)
-            img = resize_img(img)
-            img = erode_img(img)
-            img = dilate_img(img)
-            img = cv2.dilate(img, (3, 3), iterations=3)
-            img = cv2.erode(img, (3, 3), iterations=3)
-            img = gaussian_blur(img)
-            img = trim(img)
-            cv2.imwrite(save_dir + '_auged_' + filename + '.png', img)
-            print("Saved " + save_dir + '_auged_' + filename + '.png')
-
-
-def testing():
-    src_dir = 'D:/Datasets/laser_etch/helvetica_images/chars/'
-    filename = 'T.png'
-    img = cv2.imread(src_dir + filename)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = cv2.resize(img, (0, 0), fx=5, fy=5, interpolation=cv2.INTER_NEAREST)
-    img = custom_thresh(img, 127, 127)
-
-    h, w, _ = img.shape
-    y = int(h / 2)
-    x = int(w / 2)
-    scale = 0.5
-    angle = random.randint(0, 360)
-    img = np.pad(img, ((x, x), (y, y), (0, 0)), mode='constant', constant_values=127)
-    img = cv2.resize(img, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
-
-    iters = 1
-    img = cv2.erode(img, (3, 3), iterations=iters)
-    img = cv2.dilate(img, (3, 3), iterations=iters)
-    img = increase_one_channel(img)
-    img = lighten_dots(img)
-
-    img_center = tuple(np.array(img.shape[1::-1]) / 2)
-    rot_mat = cv2.getRotationMatrix2D(img_center, angle, 1.0)
-    img = cv2.warpAffine(img, rot_mat, img.shape[1::-1], flags=cv2.INTER_NEAREST,
-                         borderMode=cv2.BORDER_CONSTANT, borderValue=(127, 127, 127))
-
-    img = cv2.resize(img, (0, 0), fx=(1 / scale), fy=(1 / scale), interpolation=cv2.INTER_NEAREST)
-    img_center = tuple(np.array(img.shape[1::-1]) / 2)
-    unrot_mat = cv2.getRotationMatrix2D(img_center, -angle, 1.0)
-    img = cv2.warpAffine(img, unrot_mat, img.shape[1::-1], flags=cv2.INTER_AREA,
-                         borderMode=cv2.BORDER_CONSTANT, borderValue=(127, 127, 127))
-    img = cv2.line(img, (0, x), (img.shape[1], x), (0, 0, 255), 1)
-    img = cv2.line(img, (0, x + h), (img.shape[1], x + h), (0, 0, 255), 1)
-    img = cv2.line(img, (y, 0), (y, img.shape[0]), (0, 0, 255), 1)
-    img = cv2.line(img, (y + w, 0), (y + w, img.shape[0]), (0, 0, 255), 1)
-    img = cv2.line(img, (0, x + iters), (img.shape[1], x + iters), (0, 255, 0), 1)
-    cv2.imshow('img' + str(angle), img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-
-if __name__ == '__main__':
-    process_images_2()
+    threads = []
+    threads.append(Thread(target=augment_images, args=(suffixes[0], )))
+    threads.append(Thread(target=augment_images, args=(suffixes[1], )))
+    threads.append(Thread(target=augment_images, args=(suffixes[2], )))
+    threads_start_time = time.time()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    threads_end_time = time.time()
+    threads_time = threads_end_time - threads_start_time
+    print("All threads finished. Num of threads: " + str(len(threads)))
+    print("All threads process time: " + str(threads_time) + " seconds")
