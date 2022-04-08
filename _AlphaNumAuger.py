@@ -2,26 +2,114 @@ import random
 import cv2
 import numpy as np
 import time
+import glob
 from threading import Thread
 
 
-def create_mosaic():
+def create_mosaic(imgs_path='D:/Datasets/laser_etch/helvetica_images/chars/augments/', img_ext='.png'):
     angle_plus_minus = 30
-    darksize = 704
-    files = []
+    prefix = '_aug_'
+    annots = []  # (class, center_x, center_y, width, height)
     new_mosaic = True
     new_row = True
-    new_col = True
-    for file in files:
-        img = cv2.imread(file)
-        rows, cols, ch = img.shape
-        if new_mosaic:
-            mosaic = img.copy()
-        else:
-            if mosaic.shape[1] + img.shape[1] > darksize:
-                top, bot, left, right = 0, 0, 0, darksize - mosaic.shape[1]
-                mosaic = np.pad(mosaic, ((top, bot), (left, right), (0, 0)), mode='constant', constant_values=0)
+    full_path = imgs_path + '*' + img_ext
+    files = glob.glob(full_path)
+    mosaic = None
+    first_img = None
+    imgrow = None
+    initial_len = len(files)
+    class_id = ''
+    y_offset = 0
+    x_offset = 0
+    m = 0
+    i = 0
+    while i < initial_len:
+        if len(files) > 0:
+            f = random.randint(0, len(files) - 1)
+            file = files.pop(f)
+            img = cv2.imread(file)
+            rows, _, _ = img.shape
+            scale = 0
+            if new_mosaic:
+                if rows > 100:
+                    while rows > 100:
+                        rows = rows // 2
+                        scale = scale + 2
+                    scale = 1 / scale
+                    img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                first_img = img.copy()
+                yolo_x, yolo_y, yolo_w, yolo_h = get_yolo_box(img, y_offset, x_offset)
+                cid = get_class_id_from_filename(file)
+                annots.append((cid, yolo_x, yolo_y, yolo_w, yolo_h))
+                print("first img")
+                debug_img(first_img)
+                print("end debug.")
+                new_mosaic = False
+            if new_row:
+                if first_img is None:
+                    imgrow = img.copy()
+                    yolo_x, yolo_y, yolo_w, yolo_h = get_yolo_box(img, y_offset, x_offset)
+                    cid = get_class_id_from_filename(file)
+                    annots.append((cid, yolo_x, yolo_y, yolo_w, yolo_h))
+                else:
+                    scale = first_img.shape[0] / img.shape[0]
+                    img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                    imgrow = img.copy()
 
+                new_row = False
+            else:
+                scale = first_img.shape[0] / img.shape[0]
+                img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                if imgrow.shape[1] + img.shape[1] > darksize:
+                    print("Debugging img: " + file)
+                    debug_img(img)
+                    print("end debug")
+                    new_row = True
+                    top, bot, left, right = 0, 0, 0, darksize - imgrow.shape[1]
+                    imgrow = np.pad(imgrow, ((top, bot), (left, right), (0, 0)), mode='constant', constant_values=0)
+                    if mosaic is None:
+                        mosaic = imgrow.copy()
+                        debug_img(mosaic, "mosaic " + str(mosaic.shape))
+                    else:
+                        mosaic = cv2.vconcat([mosaic, imgrow])
+                        debug_img(mosaic, "mosaic " + str(mosaic.shape))
+                    if mosaic.shape[0] + img.shape[0] > darksize:
+                        top, bot, left, right = 0, darksize - mosaic.shape[0], 0, 0
+                        mosaic = np.pad(mosaic, ((top, bot), (left, right), (0, 0)), mode='constant',
+                                        constant_values=0)
+                        debug_img(mosaic, "padded mosaic " + str(mosaic.shape))
+                        cv2.imwrite('mosaics/mosaic' + str(m) + ext)
+                        m = m + 1
+                        del mosaic
+                        mosaic = None
+                        new_mosaic = True
+                        i = i - 1
+                    else:
+                        del imgrow
+                        imgrow = img.copy()
+                        y_offset = mosaic.shape[0]
+                        y, x, _ = img.shape
+                        new_row = False
+                else:
+                    imgrow = cv2.hconcat([imgrow, img])
+
+        i = i + 1
+
+
+def get_yolo_box(npshape, y_offset=0, x_offset=0):
+    y, x, _ = npshape
+    yolo_w = x / darksize
+    yolo_h = y / darksize
+    yolo_y = (y_offset + (y / 2)) / darksize
+    yolo_x = (x_offset + (x / 2)) / darksize
+    return yolo_x, yolo_y, yolo_w, yolo_h
+
+
+def get_class_id_from_filename(filename):
+    prefix = '_aug_'
+    x = filename.split(prefix)
+    cid = x[1][0]
+    return cid
 
 
 def make_chars_list():
@@ -34,10 +122,10 @@ def copy_file():
     chars = make_chars_list()
     direct = 'D:/Datasets/laser_etch/helvetica_images/chars/'
     filename = 'xlt_'
-    ext = '.png'
+    extn = '.png'
     chars = make_chars_list()
     for c in chars:
-        file = cv2.imread(direct + filename + c + ext)
+        file = cv2.imread(direct + filename + c + extn)
         cv2.imwrite(direct + c + '_xlt' + '.png', file)
 
 
@@ -199,7 +287,7 @@ def blotcher1(src):
     img = cv2.warpAffine(img, rot_mat, img.shape[1::-1], flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_WRAP)
     img = cv2.erode(img, (3, 3))
     img = cv2.dilate(img, (3, 3))
-    img = increase_one_channel(img)
+    # img = increase_one_channel(img)
     img = lighten_dots(img)
     img = cv2.resize(img, (0, 0), fx=1 / scale, fy=1 / scale, interpolation=cv2.INTER_NEAREST)
     img_center = tuple(np.array(img.shape[1::-1]) / 2)
@@ -347,45 +435,38 @@ def trim(src, character):
     return img
 
 
-def augment_images(suffix):
+def augment_images(suffix, n):
     #  Medium blotching, medium texturing, thinner character thickness
     start_time = time.time()
     print("Timer started for suffix: " + suffix)
     chars = make_chars_list()
-    for c in chars:
-        filename = c + suffix
-        full_path = src_dir + filename + ext
-        img = cv2.imread(full_path)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = custom_thresh(img, 127, 127)
-        img = blotcher1(img)
-        img = sharpen(img)
-        img = resize_img(img)
-        img = erode_img(img)
-        img = cv2.dilate(img, (3, 3), iterations=3)
-        img = cv2.erode(img, (3, 3), iterations=3)
-        img = gaussian_blur(img)
-        img = sharpen_random(img)
-        img = trim(img, c)
-        cv2.imwrite(save_dir + '_aug_' + filename + '.png', img)
-        # print("Saved " + save_dir + '_auged_' + filename + '.png')
+    for i in range(n):
+        for c in chars:
+            filename = c + suffix
+            full_path = src_dir + filename + ext
+            img = cv2.imread(full_path)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = custom_thresh(img, 127, 127)
+            img = blotcher1(img)
+            img = sharpen(img)
+            img = resize_img(img)
+            img = erode_img(img)
+            img = cv2.dilate(img, (3, 3), iterations=3)
+            img = cv2.erode(img, (3, 3), iterations=3)
+            img = gaussian_blur(img)
+            img = sharpen_random(img)
+            img = trim(img, c)
+            cv2.imwrite(save_dir + '_aug_' + filename + "_" + str(i) + '.png', img)
+            # print("Saved " + save_dir + '_auged_' + filename + '.png')
     end_time = time.time()
     print(suffix + " process time: " + str(end_time - start_time))
 
 
-if __name__ == '__main__':
-    # random.seed(3)
-    src_dir = 'D:/Datasets/laser_etch/helvetica_images/chars/'
-    save_dir = 'D:/Datasets/laser_etch/helvetica_images/chars/augments/'
-    norm_suffix = ''
-    lite_suffix = '_lt'
-    xlite_suffix = '_xlt'
-    suffixes = [norm_suffix, lite_suffix, xlite_suffix]
-    ext = '.png'
+def auger_threads(lst, n):
     threads = []
-    threads.append(Thread(target=augment_images, args=(suffixes[0], )))
-    threads.append(Thread(target=augment_images, args=(suffixes[1], )))
-    threads.append(Thread(target=augment_images, args=(suffixes[2], )))
+    threads.append(Thread(target=augment_images, args=(lst[0], n)))
+    threads.append(Thread(target=augment_images, args=(lst[1], n)))
+    threads.append(Thread(target=augment_images, args=(lst[2], n)))
     threads_start_time = time.time()
     for t in threads:
         t.start()
@@ -395,3 +476,18 @@ if __name__ == '__main__':
     threads_time = threads_end_time - threads_start_time
     print("All threads finished. Num of threads: " + str(len(threads)))
     print("All threads process time: " + str(threads_time) + " seconds")
+
+
+if __name__ == '__main__':
+    # random.seed(3)
+    darksize = 704
+    src_dir = 'D:/Datasets/laser_etch/helvetica_images/chars/'
+    save_dir = 'D:/Datasets/laser_etch/helvetica_images/chars/augments/'
+    norm_suffix = ''
+    lite_suffix = '_lt'
+    xlite_suffix = '_xlt'
+    suffixes = [norm_suffix, lite_suffix, xlite_suffix]
+    ext = '.png'
+    num = 30
+    # auger_threads(suffixes, num)
+    create_mosaic()
